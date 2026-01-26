@@ -69,6 +69,41 @@ struct SettingsView: View {
 
             Divider()
 
+            // Refresh Interval Setting
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Background Refresh")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
+                Picker("Refresh Interval", selection: $appState.refreshInterval) {
+                    ForEach(RefreshInterval.allCases) { interval in
+                        Text(interval.displayName).tag(interval)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                HStack(spacing: 4) {
+                    Text("Automatically refresh health data at the selected interval")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
+                    if appState.isLowPowerMode {
+                        Text("•")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        HStack(spacing: 2) {
+                            Image(systemName: "leaf.fill")
+                                .font(.caption2)
+                            Text("Low Power Mode (reduced frequency)")
+                                .font(.caption)
+                        }
+                        .foregroundColor(.orange)
+                    }
+                }
+            }
+
+            Divider()
+
             // Actions
             HStack {
                 if hasExistingToken {

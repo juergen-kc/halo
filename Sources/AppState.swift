@@ -18,6 +18,41 @@ enum HistoryPeriod: Int, CaseIterable, Identifiable {
     }
 }
 
+/// Represents the configurable background data refresh intervals.
+enum RefreshInterval: Int, CaseIterable, Identifiable {
+    case fifteenMinutes = 15
+    case thirtyMinutes = 30
+    case sixtyMinutes = 60
+    case manualOnly = 0
+
+    var id: Int { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .fifteenMinutes: return "15 Minutes"
+        case .thirtyMinutes: return "30 Minutes"
+        case .sixtyMinutes: return "60 Minutes"
+        case .manualOnly: return "Manual Only"
+        }
+    }
+
+    /// The refresh interval in seconds, or nil for manual-only mode.
+    var timeInterval: TimeInterval? {
+        switch self {
+        case .fifteenMinutes: return 15 * 60
+        case .thirtyMinutes: return 30 * 60
+        case .sixtyMinutes: return 60 * 60
+        case .manualOnly: return nil
+        }
+    }
+
+    /// The reduced interval to use in low power mode (double the normal interval).
+    var lowPowerTimeInterval: TimeInterval? {
+        guard let interval = timeInterval else { return nil }
+        return interval * 2
+    }
+}
+
 /// Centralized application state that manages health data and coordinates data fetching.
 /// This observable object is shared across the app to ensure consistent state.
 @MainActor
@@ -49,6 +84,21 @@ final class AppState: ObservableObject {
         set { historyPeriodDays = newValue.rawValue }
     }
 
+    /// The selected refresh interval for background data updates. Persisted to UserDefaults.
+    @AppStorage("refreshIntervalMinutes") var refreshIntervalMinutes: Int = RefreshInterval.fifteenMinutes.rawValue
+
+    /// The current refresh interval as an enum value.
+    var refreshInterval: RefreshInterval {
+        get { RefreshInterval(rawValue: refreshIntervalMinutes) ?? .fifteenMinutes }
+        set {
+            refreshIntervalMinutes = newValue.rawValue
+            restartAutoRefresh()
+        }
+    }
+
+    /// Whether the system is currently in low power mode.
+    @Published private(set) var isLowPowerMode = false
+
     /// The most recent detailed sleep period data with stage durations.
     @Published private(set) var currentSleepPeriod: SleepPeriod?
 
@@ -70,8 +120,8 @@ final class AppState: ObservableObject {
     /// Timer for automatic data refresh.
     private var refreshTimer: Timer?
 
-    /// Refresh interval in seconds (default: 15 minutes).
-    private let refreshInterval: TimeInterval = 15 * 60
+    /// Observer for power state changes.
+    private var powerStateObserver: NSObjectProtocol?
 
     /// Shared instance for app-wide access.
     static let shared = AppState()
@@ -82,7 +132,14 @@ final class AppState: ObservableObject {
     ) {
         self.apiService = apiService
         self.keychainService = keychainService
+        setupPowerStateObserver()
         loadTokenAndFetchData()
+    }
+
+    deinit {
+        if let observer = powerStateObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
     }
 
     // MARK: - Public Interface
@@ -163,11 +220,23 @@ final class AppState: ObservableObject {
         await fetchData()
     }
 
-    /// Starts automatic periodic data refresh.
+    /// Starts automatic periodic data refresh based on the configured interval.
+    /// Respects low power mode by using a reduced refresh frequency.
     func startAutoRefresh() {
         stopAutoRefresh()
 
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: refreshInterval, repeats: true) { [weak self] _ in
+        // Determine the effective interval based on settings and power mode
+        let interval: TimeInterval?
+        if isLowPowerMode {
+            interval = refreshInterval.lowPowerTimeInterval
+        } else {
+            interval = refreshInterval.timeInterval
+        }
+
+        // If manual-only mode or no interval, don't start timer
+        guard let effectiveInterval = interval else { return }
+
+        refreshTimer = Timer.scheduledTimer(withTimeInterval: effectiveInterval, repeats: true) { [weak self] _ in
             Task { @MainActor [weak self] in
                 await self?.fetchData()
             }
@@ -178,6 +247,12 @@ final class AppState: ObservableObject {
     func stopAutoRefresh() {
         refreshTimer?.invalidate()
         refreshTimer = nil
+    }
+
+    /// Restarts the auto-refresh timer with the current settings.
+    /// Called when refresh interval or power mode changes.
+    func restartAutoRefresh() {
+        startAutoRefresh()
     }
 
     /// Clears all current data and error state.
@@ -294,6 +369,34 @@ final class AppState: ObservableObject {
     }
 
     // MARK: - Private Helpers
+
+    /// Sets up observation of system power state changes.
+    private func setupPowerStateObserver() {
+        // Check initial power state
+        isLowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+
+        // Observe power state changes
+        powerStateObserver = NotificationCenter.default.addObserver(
+            forName: .NSProcessInfoPowerStateDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.handlePowerStateChange()
+            }
+        }
+    }
+
+    /// Handles power state changes by updating the flag and restarting refresh timer.
+    private func handlePowerStateChange() {
+        let wasLowPowerMode = isLowPowerMode
+        isLowPowerMode = ProcessInfo.processInfo.isLowPowerModeEnabled
+
+        // Only restart timer if power mode actually changed
+        if wasLowPowerMode != isLowPowerMode {
+            restartAutoRefresh()
+        }
+    }
 
     /// Loads the token from Keychain and initiates initial data fetch.
     private func loadTokenAndFetchData() {
