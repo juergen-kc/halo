@@ -28,6 +28,12 @@ struct CommanderApp: App {
                 .environmentObject(appState)
         }
         .windowResizability(.contentSize)
+
+        Window("About Commander", id: "about") {
+            AboutView()
+        }
+        .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
     }
 }
 

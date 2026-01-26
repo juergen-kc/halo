@@ -371,43 +371,88 @@ struct MenuBarView: View {
 
     @ViewBuilder
     private var footerSection: some View {
-        HStack(spacing: 12) {
-            Button {
-                openURL(ouraDashboardURL)
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "globe")
-                        .font(.system(size: 10))
-                    Text("Oura Dashboard")
-                        .font(.caption)
+        VStack(spacing: 8) {
+            // Action buttons row
+            HStack(spacing: 8) {
+                // Refresh Now button
+                Button {
+                    Task {
+                        await appState.fetchData()
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10))
+                        Text("Refresh")
+                            .font(.caption)
+                    }
+                    .frame(maxWidth: .infinity)
                 }
-            }
-            .buttonStyle(.plain)
-            .foregroundColor(.accentColor)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(appState.isLoading)
+                .keyboardShortcut("r", modifiers: .command)
+                .help("Refresh Now (⌘R)")
 
-            Spacer()
-
-            Button {
-                openWindow(id: "settings")
-            } label: {
-                Image(systemName: "gear")
-                    .font(.system(size: 12))
+                // Open Oura Dashboard button
+                Button {
+                    openURL(ouraDashboardURL)
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "globe")
+                            .font(.system(size: 10))
+                        Text("Oura")
+                            .font(.caption)
+                    }
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .keyboardShortcut("o", modifiers: .command)
+                .help("Open Oura Dashboard (⌘O)")
             }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .help("Settings")
-            .keyboardShortcut(",", modifiers: .command)
 
-            Button {
-                NSApplication.shared.terminate(nil)
-            } label: {
-                Image(systemName: "power")
-                    .font(.system(size: 12))
+            Divider()
+
+            // Settings and controls row
+            HStack(spacing: 12) {
+                // About button
+                Button {
+                    openWindow(id: "about")
+                } label: {
+                    Image(systemName: "info.circle")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+                .help("About Commander")
+
+                Spacer()
+
+                // Settings button
+                Button {
+                    openWindow(id: "settings")
+                } label: {
+                    Image(systemName: "gear")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+                .help("Settings (⌘,)")
+                .keyboardShortcut(",", modifiers: .command)
+
+                // Quit button
+                Button {
+                    NSApplication.shared.terminate(nil)
+                } label: {
+                    Image(systemName: "power")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.plain)
+                .foregroundColor(.secondary)
+                .help("Quit Commander (⌘Q)")
+                .keyboardShortcut("q", modifiers: .command)
             }
-            .buttonStyle(.plain)
-            .foregroundColor(.secondary)
-            .help("Quit Commander")
-            .keyboardShortcut("q")
         }
     }
 }
