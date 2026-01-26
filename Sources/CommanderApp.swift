@@ -9,5 +9,10 @@ struct CommanderApp: App {
             MenuBarView()
         }
         .menuBarExtraStyle(.window)
+
+        Window("Settings", id: "settings") {
+            SettingsView()
+        }
+        .windowResizability(.contentSize)
     }
 }
