@@ -29,8 +29,13 @@ struct SettingsView: View {
                 .tabItem {
                     Label("General", systemImage: "gear")
                 }
+
+            OAuth2SetupTab()
+                .tabItem {
+                    Label("OAuth2", systemImage: "lock.shield")
+                }
         }
-        .frame(width: 450, height: 350)
+        .frame(width: 500, height: 400)
     }
 }
 
@@ -381,6 +386,256 @@ struct GeneralSettingsTab: View {
     private func syncLaunchAtLoginState() {
         let currentStatus = SMAppService.mainApp.status
         appState.launchAtLogin = (currentStatus == .enabled)
+    }
+}
+
+// MARK: - OAuth2 Setup Tab
+
+/// OAuth2 setup tab providing guidance for developers who want to create their own Oura application.
+/// This enables users to use OAuth2 authentication instead of Personal Access Tokens.
+struct OAuth2SetupTab: View {
+    /// URL for Oura developer portal where users register applications.
+    private let developerPortalURL = "https://cloud.ouraring.com/oauth/applications"
+
+    /// URL for Oura API documentation.
+    private let apiDocsURL = "https://cloud.ouraring.com/docs"
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                // Header section
+                headerSection
+
+                Divider()
+
+                // Why OAuth2 section
+                whyOAuth2Section
+
+                Divider()
+
+                // Setup steps section
+                setupStepsSection
+
+                Divider()
+
+                // Technical details section
+                technicalDetailsSection
+
+                Divider()
+
+                // Current status section
+                currentStatusSection
+            }
+            .padding()
+        }
+    }
+
+    // MARK: - Subviews
+
+    @ViewBuilder
+    private var headerSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Image(systemName: "lock.shield.fill")
+                    .font(.title2)
+                    .foregroundColor(.blue)
+                Text("OAuth2 Authentication Setup")
+                    .font(.headline)
+            }
+
+            // swiftlint:disable:next line_length
+            Text("Advanced configuration for developers who want to distribute their own version of this app or use OAuth2 instead of Personal Access Tokens.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var whyOAuth2Section: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Why Use OAuth2?")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+
+            VStack(alignment: .leading, spacing: 4) {
+                bulletPoint("More secure than sharing Personal Access Tokens")
+                bulletPoint("Required for distributing apps to other users")
+                bulletPoint("Supports automatic token refresh")
+                bulletPoint("Standard authentication flow for third-party apps")
+            }
+            .font(.caption)
+            .foregroundColor(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var setupStepsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Setup Steps")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+
+            VStack(alignment: .leading, spacing: 10) {
+                setupStep(
+                    number: 1,
+                    title: "Register Your Application",
+                    description: "Visit the Oura Developer Portal to create a new application."
+                )
+
+                Link(destination: URL(string: developerPortalURL)!) {
+                    HStack {
+                        Image(systemName: "arrow.up.right.square")
+                        Text("Open Oura Developer Portal")
+                    }
+                    .font(.caption)
+                }
+                .padding(.leading, 24)
+
+                setupStep(
+                    number: 2,
+                    title: "Configure Application Details",
+                    description: "Enter your app name, description, and organization details."
+                )
+
+                setupStep(
+                    number: 3,
+                    title: "Set Redirect URI",
+                    description: "Use a custom URL scheme for macOS apps:"
+                )
+
+                Text("commander://oauth/callback")
+                    .font(.system(.caption, design: .monospaced))
+                    .padding(6)
+                    .background(Color.secondary.opacity(0.1))
+                    .cornerRadius(4)
+                    .padding(.leading, 24)
+
+                setupStep(
+                    number: 4,
+                    title: "Select Scopes",
+                    description: "Request the following OAuth2 scopes:"
+                )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    scopeItem("daily", "Daily summaries (sleep, readiness)")
+                    scopeItem("heartrate", "Heart rate data")
+                    scopeItem("personal", "Basic profile information")
+                }
+                .padding(.leading, 24)
+
+                setupStep(
+                    number: 5,
+                    title: "Save Your Credentials",
+                    description: "Copy your Client ID and Client Secret. Keep the secret secure!"
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var technicalDetailsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Technical Details")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+
+            VStack(alignment: .leading, spacing: 4) {
+                technicalDetail("Authorization URL", "https://cloud.ouraring.com/oauth/authorize")
+                technicalDetail("Token URL", "https://cloud.ouraring.com/oauth/token")
+                technicalDetail("Redirect URI", "commander://oauth/callback")
+                technicalDetail("Grant Type", "authorization_code")
+            }
+
+            Link(destination: URL(string: apiDocsURL)!) {
+                HStack {
+                    Image(systemName: "book")
+                    Text("View Full API Documentation")
+                }
+                .font(.caption)
+            }
+            .padding(.top, 4)
+        }
+    }
+
+    @ViewBuilder
+    private var currentStatusSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Current Authentication")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+
+            HStack(spacing: 8) {
+                Image(systemName: "key.fill")
+                    .foregroundColor(.orange)
+                Text("Using Personal Access Token (PAT)")
+                    .font(.caption)
+            }
+
+            // swiftlint:disable:next line_length
+            Text("This app currently uses PAT authentication. OAuth2 support is planned for a future release. The architecture is designed to support both methods.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    // MARK: - Helper Views
+
+    @ViewBuilder
+    private func bulletPoint(_ text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Text("•")
+            Text(text)
+        }
+    }
+
+    @ViewBuilder
+    private func setupStep(number: Int, title: String, description: String) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            Text("\(number)")
+                .font(.caption)
+                .fontWeight(.bold)
+                .foregroundColor(.white)
+                .frame(width: 18, height: 18)
+                .background(Color.blue)
+                .clipShape(Circle())
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption)
+                    .fontWeight(.medium)
+                Text(description)
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func scopeItem(_ scope: String, _ description: String) -> some View {
+        HStack(spacing: 4) {
+            Text(scope)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundColor(.blue)
+            Text("—")
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Text(description)
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private func technicalDetail(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .top, spacing: 4) {
+            Text(label + ":")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .frame(width: 100, alignment: .leading)
+            Text(value)
+                .font(.system(.caption, design: .monospaced))
+                .foregroundColor(.primary)
+        }
     }
 }
 

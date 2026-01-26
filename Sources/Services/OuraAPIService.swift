@@ -102,12 +102,23 @@ struct RetryConfiguration {
 
 /// Service for fetching health data from the Oura API.
 /// Provides async/await methods for all supported endpoints with proper error handling.
+///
+/// ## Authentication Support
+/// The service supports two authentication modes:
+/// 1. **Direct token mode**: Set token via `setAccessToken(_:)` (current PAT approach)
+/// 2. **Provider mode**: Use an `AuthenticationProvider` for flexible auth (future OAuth2)
+///
+/// The provider mode takes precedence when configured, allowing seamless migration
+/// from PAT to OAuth2 without changing API call sites.
 final class OuraAPIService {
     /// Base URL for the Oura API v2.
     private let baseURL = "https://api.ouraring.com/v2/usercollection"
 
-    /// The personal access token for API authentication.
+    /// The personal access token for API authentication (direct mode).
     private var accessToken: String?
+
+    /// Optional authentication provider for flexible auth (provider mode).
+    private var authProvider: AuthenticationProvider?
 
     /// URLSession used for network requests.
     private let session: URLSession
@@ -121,21 +132,25 @@ final class OuraAPIService {
     /// Creates a new OuraAPIService instance.
     /// - Parameters:
     ///   - accessToken: Optional personal access token. Can be set later via `setAccessToken(_:)`.
+    ///   - authProvider: Optional authentication provider for flexible auth.
     ///   - session: URLSession to use for requests. Defaults to `.shared`.
     ///   - retryConfig: Configuration for retry behavior. Defaults to standard configuration.
     init(
         accessToken: String? = nil,
+        authProvider: AuthenticationProvider? = nil,
         session: URLSession = .shared,
         retryConfig: RetryConfiguration = .default
     ) {
         self.accessToken = accessToken
+        self.authProvider = authProvider
         self.session = session
         self.decoder = JSONDecoder()
         self.retryConfig = retryConfig
     }
 
-    /// Sets the access token for API authentication.
+    /// Sets the access token for API authentication (direct mode).
     /// - Parameter token: The personal access token from Oura.
+    /// - Note: When using provider mode, this token is ignored in favor of the provider.
     func setAccessToken(_ token: String) {
         self.accessToken = token
     }
@@ -145,9 +160,49 @@ final class OuraAPIService {
         self.accessToken = nil
     }
 
-    /// Checks if an access token is configured.
+    /// Sets the authentication provider for flexible auth (provider mode).
+    /// - Parameter provider: The authentication provider to use.
+    /// - Note: Provider mode takes precedence over direct token mode.
+    func setAuthProvider(_ provider: AuthenticationProvider) {
+        self.authProvider = provider
+    }
+
+    /// Clears the authentication provider.
+    func clearAuthProvider() {
+        self.authProvider = nil
+    }
+
+    /// Checks if an access token is configured (either directly or via provider).
     var hasAccessToken: Bool {
-        accessToken != nil && !(accessToken?.isEmpty ?? true)
+        if authProvider?.isConfigured == true {
+            return true
+        }
+        return accessToken != nil && !(accessToken?.isEmpty ?? true)
+    }
+
+    /// Retrieves the current access token from either provider or direct storage.
+    /// - Returns: The access token if available.
+    /// - Throws: `OuraAPIError.missingAccessToken` if no token is configured.
+    private func resolveAccessToken() async throws -> String {
+        // Provider mode takes precedence
+        if let provider = authProvider {
+            let result = await provider.getAccessToken()
+            switch result {
+            case let .success(token):
+                return token
+            case .failure:
+                throw OuraAPIError.missingAccessToken
+            case .needsRefresh:
+                // For PAT, this means user needs to generate a new token
+                throw OuraAPIError.unauthorized
+            }
+        }
+
+        // Fall back to direct token mode
+        guard let token = accessToken, !token.isEmpty else {
+            throw OuraAPIError.missingAccessToken
+        }
+        return token
     }
 
     // MARK: - Daily Sleep Endpoint
@@ -333,9 +388,8 @@ final class OuraAPIService {
         endpoint: String,
         queryItems: [URLQueryItem]
     ) async throws -> T {
-        guard let token = accessToken, !token.isEmpty else {
-            throw OuraAPIError.missingAccessToken
-        }
+        // Resolve token from provider or direct storage
+        let token = try await resolveAccessToken()
 
         guard var urlComponents = URLComponents(string: "\(baseURL)/\(endpoint)") else {
             throw OuraAPIError.invalidURL
