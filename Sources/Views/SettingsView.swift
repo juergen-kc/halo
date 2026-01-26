@@ -1,9 +1,43 @@
 import SwiftUI
+import ServiceManagement
 
-/// Settings view for configuring the Oura Personal Access Token and display preferences.
+/// Settings view with tabbed interface for configuring app preferences.
+/// Accessible via menu bar dropdown or Cmd+, keyboard shortcut.
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
-    @ObservedObject private var appState = AppState.shared
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        TabView {
+            AccountSettingsTab()
+                .tabItem {
+                    Label("Account", systemImage: "person.circle")
+                }
+
+            DisplaySettingsTab()
+                .tabItem {
+                    Label("Display", systemImage: "display")
+                }
+
+            NotificationsSettingsTab()
+                .tabItem {
+                    Label("Notifications", systemImage: "bell")
+                }
+
+            GeneralSettingsTab()
+                .tabItem {
+                    Label("General", systemImage: "gear")
+                }
+        }
+        .frame(width: 450, height: 350)
+    }
+}
+
+// MARK: - Account Settings Tab
+
+/// Account tab for PAT configuration.
+struct AccountSettingsTab: View {
+    @EnvironmentObject private var appState: AppState
 
     @State private var token: String = ""
     @State private var isValidating = false
@@ -14,124 +48,53 @@ struct SettingsView: View {
     private let apiService = OuraAPIService()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Header
-            Text("Oura API Settings")
-                .font(.headline)
-
-            Divider()
-
-            // Token status
-            tokenStatusView
-
-            // Token input
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Personal Access Token")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-
-                SecureField("Enter your Oura PAT", text: $token)
-                    .textFieldStyle(.roundedBorder)
-                    .disabled(isValidating)
-
-                Text("Get your token from [cloud.ouraring.com/personal-access-tokens](https://cloud.ouraring.com/personal-access-tokens)")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
+        Form {
+            Section {
+                tokenStatusView
             }
 
-            // Validation feedback
-            if let result = validationResult {
-                validationFeedbackView(result)
-            }
+            Section {
+                VStack(alignment: .leading, spacing: 8) {
+                    SecureField("Enter your Oura PAT", text: $token)
+                        .textFieldStyle(.roundedBorder)
+                        .disabled(isValidating)
 
-            Divider()
-
-            // History Period Setting
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Trend Graph Period")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-
-                Picker("History Period", selection: $appState.historyPeriod) {
-                    ForEach(HistoryPeriod.allCases) { period in
-                        Text(period.displayName).tag(period)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .onChange(of: appState.historyPeriod) { _ in
-                    appState.onHistoryPeriodChanged()
-                }
-
-                Text("Choose how much historical data to display in trend graphs")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-
-            Divider()
-
-            // Refresh Interval Setting
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Background Refresh")
-                    .font(.subheadline)
-                    .foregroundColor(.secondary)
-
-                Picker("Refresh Interval", selection: $appState.refreshInterval) {
-                    ForEach(RefreshInterval.allCases) { interval in
-                        Text(interval.displayName).tag(interval)
-                    }
-                }
-                .pickerStyle(.segmented)
-
-                HStack(spacing: 4) {
-                    Text("Automatically refresh health data at the selected interval")
+                    Text("Get your token from [cloud.ouraring.com/personal-access-tokens](https://cloud.ouraring.com/personal-access-tokens)")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                }
+            } header: {
+                Text("Personal Access Token")
+            }
 
-                    if appState.isLowPowerMode {
-                        Text("•")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                        HStack(spacing: 2) {
-                            Image(systemName: "leaf.fill")
-                                .font(.caption2)
-                            Text("Low Power Mode (reduced frequency)")
-                                .font(.caption)
-                        }
-                        .foregroundColor(.orange)
-                    }
+            if let result = validationResult {
+                Section {
+                    validationFeedbackView(result)
                 }
             }
 
-            Divider()
-
-            // Actions
-            HStack {
-                if hasExistingToken {
-                    Button("Clear Token", role: .destructive) {
-                        clearToken()
+            Section {
+                HStack {
+                    if hasExistingToken {
+                        Button("Clear Token", role: .destructive) {
+                            clearToken()
+                        }
+                        .disabled(isValidating)
                     }
-                    .disabled(isValidating)
-                }
 
-                Spacer()
+                    Spacer()
 
-                Button("Cancel") {
-                    dismiss()
-                }
-                .keyboardShortcut(.cancelAction)
-                .disabled(isValidating)
-
-                Button("Save") {
-                    Task {
-                        await validateAndSave()
+                    Button("Save Token") {
+                        Task {
+                            await validateAndSave()
+                        }
                     }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(token.isEmpty || isValidating)
                 }
-                .keyboardShortcut(.defaultAction)
-                .disabled(token.isEmpty || isValidating)
             }
         }
-        .padding(20)
-        .frame(width: 400)
+        .formStyle(.grouped)
         .onAppear {
             loadExistingToken()
         }
@@ -187,28 +150,24 @@ struct SettingsView: View {
 
     private func loadExistingToken() {
         hasExistingToken = keychainService.hasToken()
-        // Don't load the actual token into the field for security
     }
 
     private func validateAndSave() async {
         isValidating = true
         validationResult = .validating
 
-        // Set the token on the API service for testing
         apiService.setAccessToken(token)
 
         do {
-            // Make a test API call to validate the token
-            // Use today's date for a minimal request
             let today = formatDate(Date())
             _ = try await apiService.fetchDailySleep(startDate: today, endDate: today)
 
-            // Token is valid, save to Keychain
             try keychainService.saveToken(token)
             hasExistingToken = true
             validationResult = .success
-            token = "" // Clear the input field
+            token = ""
 
+            appState.onTokenUpdated()
         } catch let error as OuraAPIError {
             validationResult = .failure(error.localizedDescription)
         } catch let error as KeychainError {
@@ -239,6 +198,160 @@ struct SettingsView: View {
     }
 }
 
+// MARK: - Display Settings Tab
+
+/// Display tab for configuring visual preferences like history period.
+struct DisplaySettingsTab: View {
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Period", selection: $appState.historyPeriod) {
+                    ForEach(HistoryPeriod.allCases) { period in
+                        Text(period.displayName).tag(period)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: appState.historyPeriod) { _ in
+                    appState.onHistoryPeriodChanged()
+                }
+
+                Text("Choose how much historical data to display in trend graphs.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } header: {
+                Text("Trend Graph Period")
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+// MARK: - Notifications Settings Tab
+
+/// Notifications tab for configuring morning summary and alert preferences.
+struct NotificationsSettingsTab: View {
+    @EnvironmentObject private var appState: AppState
+
+    @State private var deliveryTime = Date()
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Enable Morning Summary", isOn: $appState.morningSummaryEnabled)
+
+                if appState.morningSummaryEnabled {
+                    DatePicker(
+                        "Delivery Time",
+                        selection: $deliveryTime,
+                        displayedComponents: .hourAndMinute
+                    )
+                    .onChange(of: deliveryTime) { newValue in
+                        let calendar = Calendar.current
+                        appState.morningSummaryHour = calendar.component(.hour, from: newValue)
+                        appState.morningSummaryMinute = calendar.component(.minute, from: newValue)
+                    }
+                }
+
+                Text("Receive a daily summary of your readiness, sleep, and activity scores each morning.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } header: {
+                Text("Morning Summary")
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear {
+            loadDeliveryTime()
+        }
+    }
+
+    private func loadDeliveryTime() {
+        var components = DateComponents()
+        components.hour = appState.morningSummaryHour
+        components.minute = appState.morningSummaryMinute
+        if let date = Calendar.current.date(from: components) {
+            deliveryTime = date
+        }
+    }
+}
+
+// MARK: - General Settings Tab
+
+/// General tab for configuring refresh interval and launch behavior.
+struct GeneralSettingsTab: View {
+    @EnvironmentObject private var appState: AppState
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Interval", selection: $appState.refreshInterval) {
+                    ForEach(RefreshInterval.allCases) { interval in
+                        Text(interval.displayName).tag(interval)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                HStack(spacing: 4) {
+                    Text("Automatically refresh health data at the selected interval.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                if appState.isLowPowerMode {
+                    HStack(spacing: 4) {
+                        Image(systemName: "leaf.fill")
+                            .font(.caption2)
+                        Text("Low Power Mode active — refresh frequency is reduced")
+                            .font(.caption)
+                    }
+                    .foregroundColor(.orange)
+                }
+            } header: {
+                Text("Background Refresh")
+            }
+
+            Section {
+                Toggle("Launch at Login", isOn: $appState.launchAtLogin)
+                    .onChange(of: appState.launchAtLogin) { newValue in
+                        setLaunchAtLogin(enabled: newValue)
+                    }
+
+                Text("Automatically start Commander when you log in to your Mac.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            } header: {
+                Text("Startup")
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear {
+            syncLaunchAtLoginState()
+        }
+    }
+
+    /// Sets or removes the app from Login Items using ServiceManagement.
+    private func setLaunchAtLogin(enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            // Revert the toggle on failure
+            appState.launchAtLogin = !enabled
+        }
+    }
+
+    /// Syncs the toggle state with the actual system setting.
+    private func syncLaunchAtLoginState() {
+        let currentStatus = SMAppService.mainApp.status
+        appState.launchAtLogin = (currentStatus == .enabled)
+    }
+}
+
 // MARK: - Validation Result
 
 private enum ValidationResult {
@@ -250,4 +363,5 @@ private enum ValidationResult {
 
 #Preview {
     SettingsView()
+        .environmentObject(AppState.shared)
 }

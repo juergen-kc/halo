@@ -96,6 +96,18 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Whether morning summary notifications are enabled. Persisted to UserDefaults.
+    @AppStorage("morningSummaryEnabled") var morningSummaryEnabled: Bool = false
+
+    /// The hour component (0-23) for morning summary notification delivery. Persisted to UserDefaults.
+    @AppStorage("morningSummaryHour") var morningSummaryHour: Int = 8
+
+    /// The minute component (0-59) for morning summary notification delivery. Persisted to UserDefaults.
+    @AppStorage("morningSummaryMinute") var morningSummaryMinute: Int = 0
+
+    /// Whether the app should launch at login. Persisted to UserDefaults.
+    @AppStorage("launchAtLogin") var launchAtLogin: Bool = false
+
     /// Whether the system is currently in low power mode.
     @Published private(set) var isLowPowerMode = false
 
