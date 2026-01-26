@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import UserNotifications
 
 /// Represents the selectable historical data periods for trend graphs.
 enum HistoryPeriod: Int, CaseIterable, Identifiable {
@@ -135,15 +136,23 @@ final class AppState: ObservableObject {
     /// Observer for power state changes.
     private var powerStateObserver: NSObjectProtocol?
 
+    /// Service for managing notifications.
+    private let notificationService: NotificationService
+
+    /// Tracks the last sleep data day for which a notification was scheduled.
+    @AppStorage("lastNotifiedSleepDay") private var lastNotifiedSleepDay: String = ""
+
     /// Shared instance for app-wide access.
     static let shared = AppState()
 
     init(
         apiService: OuraAPIService = OuraAPIService(),
-        keychainService: KeychainService = .shared
+        keychainService: KeychainService = .shared,
+        notificationService: NotificationService = .shared
     ) {
         self.apiService = apiService
         self.keychainService = keychainService
+        self.notificationService = notificationService
         setupPowerStateObserver()
         loadTokenAndFetchData()
     }
@@ -212,6 +221,9 @@ final class AppState: ObservableObject {
         self.sleepPeriodHistory = sleepPeriodHistoryResult.filter { $0.type == .longSleep }.sorted { $0.day < $1.day }
         self.heartRateHistory = heartRateHistoryResult.sorted { $0.day < $1.day }
         self.lastFetchTime = Date()
+
+        // Update morning summary notification with new data
+        await updateMorningSummaryNotification()
     }
 
     /// Resets data state when no token is configured.
@@ -293,6 +305,30 @@ final class AppState: ObservableObject {
         Task {
             await fetchData()
         }
+    }
+
+    /// Called when morning summary notification settings are changed.
+    /// Reschedules or cancels the notification based on current settings.
+    func onMorningSummarySettingsChanged() {
+        Task {
+            await updateMorningSummaryNotification()
+        }
+    }
+
+    /// Requests notification authorization and returns the result.
+    /// - Returns: True if authorization was granted.
+    func requestNotificationAuthorization() async -> Bool {
+        await notificationService.requestAuthorization()
+    }
+
+    /// The current notification authorization status.
+    var notificationAuthorizationStatus: UNAuthorizationStatus {
+        notificationService.authorizationStatus
+    }
+
+    /// Whether notifications are authorized.
+    var areNotificationsAuthorized: Bool {
+        notificationService.isAuthorized
     }
 
     // MARK: - Computed Properties for UI
@@ -424,5 +460,35 @@ final class AppState: ObservableObject {
         formatter.dateFormat = "yyyy-MM-dd"
         formatter.timeZone = TimeZone.current
         return formatter.string(from: date)
+    }
+
+    /// Updates the morning summary notification based on current settings and data.
+    private func updateMorningSummaryNotification() async {
+        // Only schedule if new sleep data is available
+        let hasNewData = hasNewSleepDataForNotification()
+
+        await notificationService.updateNotificationContent(
+            enabled: morningSummaryEnabled && hasNewData,
+            hour: morningSummaryHour,
+            minute: morningSummaryMinute,
+            sleepData: currentSleep,
+            sleepPeriod: currentSleepPeriod
+        )
+
+        // Update the last notified day if we have new data
+        if hasNewData, let day = currentSleep?.day ?? currentSleepPeriod?.day {
+            lastNotifiedSleepDay = day
+        }
+    }
+
+    /// Checks if there is new sleep data available that hasn't been notified yet.
+    private func hasNewSleepDataForNotification() -> Bool {
+        // Get the current sleep data day
+        guard let currentDay = currentSleep?.day ?? currentSleepPeriod?.day else {
+            return false
+        }
+
+        // Check if this is newer than the last notified day
+        return currentDay != lastNotifiedSleepDay
     }
 }

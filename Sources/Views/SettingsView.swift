@@ -1,5 +1,6 @@
 import SwiftUI
 import ServiceManagement
+import UserNotifications
 
 /// Settings view with tabbed interface for configuring app preferences.
 /// Accessible via menu bar dropdown or Cmd+, keyboard shortcut.
@@ -235,11 +236,18 @@ struct NotificationsSettingsTab: View {
     @EnvironmentObject private var appState: AppState
 
     @State private var deliveryTime = Date()
+    @State private var authorizationStatus: UNAuthorizationStatus = .notDetermined
 
     var body: some View {
         Form {
             Section {
                 Toggle("Enable Morning Summary", isOn: $appState.morningSummaryEnabled)
+                    .onChange(of: appState.morningSummaryEnabled) { newValue in
+                        if newValue {
+                            requestNotificationPermission()
+                        }
+                        appState.onMorningSummarySettingsChanged()
+                    }
 
                 if appState.morningSummaryEnabled {
                     DatePicker(
@@ -251,10 +259,22 @@ struct NotificationsSettingsTab: View {
                         let calendar = Calendar.current
                         appState.morningSummaryHour = calendar.component(.hour, from: newValue)
                         appState.morningSummaryMinute = calendar.component(.minute, from: newValue)
+                        appState.onMorningSummarySettingsChanged()
+                    }
+
+                    // Show permission status warning if denied
+                    if authorizationStatus == .denied {
+                        HStack(spacing: 4) {
+                            Image(systemName: "exclamationmark.triangle.fill")
+                                .font(.caption2)
+                            Text("Notifications are disabled in System Settings")
+                                .font(.caption)
+                        }
+                        .foregroundColor(.orange)
                     }
                 }
 
-                Text("Receive a daily summary of your readiness, sleep, and activity scores each morning.")
+                Text("Receive a daily summary of your sleep score and insights each morning.")
                     .font(.caption)
                     .foregroundColor(.secondary)
             } header: {
@@ -264,6 +284,7 @@ struct NotificationsSettingsTab: View {
         .formStyle(.grouped)
         .onAppear {
             loadDeliveryTime()
+            checkAuthorizationStatus()
         }
     }
 
@@ -274,6 +295,17 @@ struct NotificationsSettingsTab: View {
         if let date = Calendar.current.date(from: components) {
             deliveryTime = date
         }
+    }
+
+    private func requestNotificationPermission() {
+        Task {
+            _ = await appState.requestNotificationAuthorization()
+            checkAuthorizationStatus()
+        }
+    }
+
+    private func checkAuthorizationStatus() {
+        authorizationStatus = appState.notificationAuthorizationStatus
     }
 }
 
