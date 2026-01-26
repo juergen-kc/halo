@@ -17,6 +17,12 @@ final class AppState: ObservableObject {
     /// Historical sleep data for trends (last 7 days).
     @Published private(set) var sleepHistory: [DailySleep] = []
 
+    /// Historical sleep periods with HRV data for trends (last 7 days).
+    @Published private(set) var sleepPeriodHistory: [SleepPeriod] = []
+
+    /// Historical heart rate data for resting HR trends (last 7 days).
+    @Published private(set) var heartRateHistory: [HeartRate] = []
+
     /// The most recent detailed sleep period data with stage durations.
     @Published private(set) var currentSleepPeriod: SleepPeriod?
 
@@ -63,57 +69,66 @@ final class AppState: ObservableObject {
         lastError = nil
 
         do {
-            // Ensure we have a valid token
             let token = try keychainService.retrieveToken()
             apiService.setAccessToken(token)
-
-            let today = Date()
-            let sevenDaysAgo = Calendar.current.date(byAdding: .day, value: -7, to: today) ?? today
-
-            // Fetch today's data and historical data concurrently
-            async let todayReadiness = apiService.fetchDailyReadiness(startDate: today, endDate: today)
-            async let todaySleep = apiService.fetchDailySleep(startDate: today, endDate: today)
-            async let todaySleepPeriods = apiService.fetchSleep(startDate: today, endDate: today)
-            async let historyReadiness = apiService.fetchAllDailyReadiness(
-                startDate: Self.formatDate(sevenDaysAgo),
-                endDate: Self.formatDate(today)
-            )
-            async let historySleep = apiService.fetchAllDailySleep(
-                startDate: Self.formatDate(sevenDaysAgo),
-                endDate: Self.formatDate(today)
-            )
-
-            let (
-                readinessResult,
-                sleepResult,
-                sleepPeriodsResult,
-                readinessHistoryResult,
-                sleepHistoryResult
-            ) = try await (
-                todayReadiness, todaySleep, todaySleepPeriods, historyReadiness, historySleep
-            )
-
-            self.currentReadiness = readinessResult.items.last
-            self.currentSleep = sleepResult.items.last
-            // Use the primary (long_sleep) period, or fall back to the most recent
-            self.currentSleepPeriod = sleepPeriodsResult.items.first { $0.type == .longSleep }
-                ?? sleepPeriodsResult.items.last
-            self.readinessHistory = readinessHistoryResult.sorted { $0.day < $1.day }
-            self.sleepHistory = sleepHistoryResult.sorted { $0.day < $1.day }
-            self.lastFetchTime = Date()
+            try await performDataFetch()
         } catch let error as KeychainError where error == .itemNotFound {
             // No token configured - this is expected on first launch
-            self.lastError = nil
-            self.currentReadiness = nil
-            self.currentSleep = nil
-            self.currentSleepPeriod = nil
-            self.readinessHistory = []
-            self.sleepHistory = []
+            resetDataOnNoToken()
         } catch {
             self.lastError = error
         }
 
         isLoading = false
+    }
+
+    /// Performs the actual data fetch from the Oura API.
+    private func performDataFetch() async throws {
+        let today = Date()
+        let sevenDaysAgo = Calendar.current.date(byAdding: .day, value: -7, to: today) ?? today
+        let startDateStr = Self.formatDate(sevenDaysAgo)
+        let endDateStr = Self.formatDate(today)
+
+        // Fetch today's data and historical data concurrently
+        async let todayReadiness = apiService.fetchDailyReadiness(startDate: today, endDate: today)
+        async let todaySleep = apiService.fetchDailySleep(startDate: today, endDate: today)
+        async let todaySleepPeriods = apiService.fetchSleep(startDate: today, endDate: today)
+        async let historyReadiness = apiService.fetchAllDailyReadiness(startDate: startDateStr, endDate: endDateStr)
+        async let historySleep = apiService.fetchAllDailySleep(startDate: startDateStr, endDate: endDateStr)
+        async let historySleepPeriods = apiService.fetchAllSleep(startDate: startDateStr, endDate: endDateStr)
+        async let historyHeartRate = apiService.fetchAllHeartRate(startDate: startDateStr, endDate: endDateStr)
+
+        // Await all results
+        let readinessResult = try await todayReadiness
+        let sleepResult = try await todaySleep
+        let sleepPeriodsResult = try await todaySleepPeriods
+        let readinessHistoryResult = try await historyReadiness
+        let sleepHistoryResult = try await historySleep
+        let sleepPeriodHistoryResult = try await historySleepPeriods
+        let heartRateHistoryResult = try await historyHeartRate
+
+        // Update state
+        self.currentReadiness = readinessResult.items.last
+        self.currentSleep = sleepResult.items.last
+        self.currentSleepPeriod = sleepPeriodsResult.items.first { $0.type == .longSleep }
+            ?? sleepPeriodsResult.items.last
+        self.readinessHistory = readinessHistoryResult.sorted { $0.day < $1.day }
+        self.sleepHistory = sleepHistoryResult.sorted { $0.day < $1.day }
+        self.sleepPeriodHistory = sleepPeriodHistoryResult.filter { $0.type == .longSleep }.sorted { $0.day < $1.day }
+        self.heartRateHistory = heartRateHistoryResult.sorted { $0.day < $1.day }
+        self.lastFetchTime = Date()
+    }
+
+    /// Resets data state when no token is configured.
+    private func resetDataOnNoToken() {
+        self.lastError = nil
+        self.currentReadiness = nil
+        self.currentSleep = nil
+        self.currentSleepPeriod = nil
+        self.readinessHistory = []
+        self.sleepHistory = []
+        self.sleepPeriodHistory = []
+        self.heartRateHistory = []
     }
 
     /// Fetches the latest readiness data from the Oura API.
@@ -146,6 +161,8 @@ final class AppState: ObservableObject {
         currentSleepPeriod = nil
         readinessHistory = []
         sleepHistory = []
+        sleepPeriodHistory = []
+        heartRateHistory = []
         lastError = nil
         lastFetchTime = nil
     }
@@ -198,6 +215,48 @@ final class AppState: ObservableObject {
         let scores = sleepHistory.compactMap { $0.score }
         guard !scores.isEmpty else { return nil }
         return scores.reduce(0, +) / scores.count
+    }
+
+    /// Average HRV over the last 7 days (from sleep periods).
+    var averageHRV: Int? {
+        let hrvValues = sleepPeriodHistory.compactMap { $0.averageHrv }
+        guard !hrvValues.isEmpty else { return nil }
+        return hrvValues.reduce(0, +) / hrvValues.count
+    }
+
+    /// Average resting heart rate over the last 7 days.
+    var averageRestingHeartRate: Int? {
+        let dailyResting = dailyRestingHeartRates
+        guard !dailyResting.isEmpty else { return nil }
+        let total = dailyResting.reduce(0) { $0 + $1.value }
+        return total / dailyResting.count
+    }
+
+    /// Daily resting heart rate values grouped by day.
+    /// Returns the minimum resting HR for each day as a (day, value) tuple.
+    var dailyRestingHeartRates: [(day: String, value: Int)] {
+        // Filter to resting heart rate readings
+        let restingReadings = heartRateHistory.filter { $0.source == .rest }
+
+        // Group by day and find the minimum (lowest resting HR is most meaningful)
+        var dailyMin: [String: Int] = [:]
+        for reading in restingReadings {
+            if let existing = dailyMin[reading.day] {
+                dailyMin[reading.day] = min(existing, reading.bpm)
+            } else {
+                dailyMin[reading.day] = reading.bpm
+            }
+        }
+
+        return dailyMin.sorted { $0.key < $1.key }.map { (day: $0.key, value: $0.value) }
+    }
+
+    /// Daily HRV values from sleep periods (one per day).
+    var dailyHRVValues: [(day: String, value: Int)] {
+        sleepPeriodHistory.compactMap { period in
+            guard let hrv = period.averageHrv else { return nil }
+            return (day: period.day, value: hrv)
+        }
     }
 
     // MARK: - Private Helpers

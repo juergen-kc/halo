@@ -40,6 +40,13 @@ struct MenuBarView: View {
                             readinessHistory: appState.readinessHistory.compactMap { $0.score },
                             sleepHistory: appState.sleepHistory.compactMap { $0.score }
                         )
+
+                        TrendGraphsView(
+                            sleepHistory: appState.sleepHistory,
+                            readinessHistory: appState.readinessHistory,
+                            hrvHistory: appState.dailyHRVValues,
+                            restingHRHistory: appState.dailyRestingHeartRates
+                        )
                     }
 
                     if appState.hasToken && appState.currentReadiness == nil && appState.currentSleep == nil {
