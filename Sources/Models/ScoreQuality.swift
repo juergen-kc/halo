@@ -41,4 +41,15 @@ enum ScoreQuality: Equatable {
         case .unknown: return "gray"
         }
     }
+
+    /// Color for menu bar icon display.
+    /// Uses simplified three-tier coloring: green (85+), yellow (70-84), red (<70).
+    var menuBarColorName: String {
+        switch self {
+        case .optimal: return "green"
+        case .good: return "yellow"
+        case .fair, .attention: return "red"
+        case .unknown: return "gray"
+        }
+    }
 }
