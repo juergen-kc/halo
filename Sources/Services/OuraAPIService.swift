@@ -1,0 +1,460 @@
+import Foundation
+
+/// Typed errors for Oura API operations.
+/// Provides specific error cases for common API failure scenarios.
+enum OuraAPIError: Error, Equatable {
+    /// The API access token is missing or not configured.
+    case missingAccessToken
+    /// The constructed URL is invalid.
+    case invalidURL
+    /// HTTP error with status code and optional message.
+    case httpError(statusCode: Int, message: String?)
+    /// The access token is invalid or expired (401).
+    case unauthorized
+    /// Rate limit exceeded (429).
+    case rateLimitExceeded
+    /// The requested resource was not found (404).
+    case notFound
+    /// Failed to decode the API response.
+    case decodingError(String)
+    /// Network connectivity or other URLSession errors.
+    case networkError(String)
+    /// Server error (5xx status codes).
+    case serverError(statusCode: Int)
+}
+
+// MARK: - Error Descriptions
+
+extension OuraAPIError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .missingAccessToken:
+            return "Oura API access token is not configured"
+        case .invalidURL:
+            return "Failed to construct a valid API URL"
+        case let .httpError(statusCode, message):
+            if let message {
+                return "HTTP error \(statusCode): \(message)"
+            }
+            return "HTTP error \(statusCode)"
+        case .unauthorized:
+            return "Invalid or expired access token"
+        case .rateLimitExceeded:
+            return "API rate limit exceeded. Please try again later"
+        case .notFound:
+            return "The requested resource was not found"
+        case let .decodingError(details):
+            return "Failed to decode API response: \(details)"
+        case let .networkError(details):
+            return "Network error: \(details)"
+        case let .serverError(statusCode):
+            return "Server error (\(statusCode)). Please try again later"
+        }
+    }
+}
+
+// MARK: - API Response Wrappers
+
+/// Generic wrapper for paginated Oura API responses.
+/// The Oura API returns data in an envelope with optional pagination token.
+struct OuraAPIResponse<T: Decodable>: Decodable {
+    let data: [T]
+    let nextToken: String?
+
+    enum CodingKeys: String, CodingKey {
+        case data
+        case nextToken = "next_token"
+    }
+}
+
+/// Result of a paginated API fetch including the data and pagination state.
+struct PaginatedResult<T> {
+    let items: [T]
+    let nextToken: String?
+
+    var hasMore: Bool {
+        nextToken != nil
+    }
+}
+
+// MARK: - Oura API Service
+
+/// Service for fetching health data from the Oura API.
+/// Provides async/await methods for all supported endpoints with proper error handling.
+final class OuraAPIService {
+    /// Base URL for the Oura API v2.
+    private let baseURL = "https://api.ouraring.com/v2/usercollection"
+
+    /// The personal access token for API authentication.
+    private var accessToken: String?
+
+    /// URLSession used for network requests.
+    private let session: URLSession
+
+    /// JSON decoder configured for Oura API responses.
+    private let decoder: JSONDecoder
+
+    /// Creates a new OuraAPIService instance.
+    /// - Parameters:
+    ///   - accessToken: Optional personal access token. Can be set later via `setAccessToken(_:)`.
+    ///   - session: URLSession to use for requests. Defaults to `.shared`.
+    init(accessToken: String? = nil, session: URLSession = .shared) {
+        self.accessToken = accessToken
+        self.session = session
+        self.decoder = JSONDecoder()
+    }
+
+    /// Sets the access token for API authentication.
+    /// - Parameter token: The personal access token from Oura.
+    func setAccessToken(_ token: String) {
+        self.accessToken = token
+    }
+
+    /// Clears the current access token.
+    func clearAccessToken() {
+        self.accessToken = nil
+    }
+
+    /// Checks if an access token is configured.
+    var hasAccessToken: Bool {
+        accessToken != nil && !(accessToken?.isEmpty ?? true)
+    }
+
+    // MARK: - Daily Sleep Endpoint
+
+    /// Fetches daily sleep summaries for a date range.
+    /// - Parameters:
+    ///   - startDate: Start date in YYYY-MM-DD format.
+    ///   - endDate: End date in YYYY-MM-DD format.
+    ///   - nextToken: Optional pagination token for fetching additional results.
+    /// - Returns: Paginated result containing daily sleep data.
+    func fetchDailySleep(
+        startDate: String,
+        endDate: String,
+        nextToken: String? = nil
+    ) async throws -> PaginatedResult<DailySleep> {
+        var queryItems = [
+            URLQueryItem(name: "start_date", value: startDate),
+            URLQueryItem(name: "end_date", value: endDate)
+        ]
+        if let nextToken {
+            queryItems.append(URLQueryItem(name: "next_token", value: nextToken))
+        }
+
+        let response: OuraAPIResponse<DailySleep> = try await fetchData(
+            endpoint: "daily_sleep",
+            queryItems: queryItems
+        )
+        return PaginatedResult(items: response.data, nextToken: response.nextToken)
+    }
+
+    /// Fetches all daily sleep summaries for a date range, handling pagination automatically.
+    /// - Parameters:
+    ///   - startDate: Start date in YYYY-MM-DD format.
+    ///   - endDate: End date in YYYY-MM-DD format.
+    /// - Returns: Array of all daily sleep data for the range.
+    func fetchAllDailySleep(startDate: String, endDate: String) async throws -> [DailySleep] {
+        try await fetchAllPages { nextToken in
+            try await self.fetchDailySleep(
+                startDate: startDate,
+                endDate: endDate,
+                nextToken: nextToken
+            )
+        }
+    }
+
+    // MARK: - Daily Readiness Endpoint
+
+    /// Fetches daily readiness scores for a date range.
+    /// - Parameters:
+    ///   - startDate: Start date in YYYY-MM-DD format.
+    ///   - endDate: End date in YYYY-MM-DD format.
+    ///   - nextToken: Optional pagination token for fetching additional results.
+    /// - Returns: Paginated result containing daily readiness data.
+    func fetchDailyReadiness(
+        startDate: String,
+        endDate: String,
+        nextToken: String? = nil
+    ) async throws -> PaginatedResult<DailyReadiness> {
+        var queryItems = [
+            URLQueryItem(name: "start_date", value: startDate),
+            URLQueryItem(name: "end_date", value: endDate)
+        ]
+        if let nextToken {
+            queryItems.append(URLQueryItem(name: "next_token", value: nextToken))
+        }
+
+        let response: OuraAPIResponse<DailyReadiness> = try await fetchData(
+            endpoint: "daily_readiness",
+            queryItems: queryItems
+        )
+        return PaginatedResult(items: response.data, nextToken: response.nextToken)
+    }
+
+    /// Fetches all daily readiness scores for a date range, handling pagination automatically.
+    /// - Parameters:
+    ///   - startDate: Start date in YYYY-MM-DD format.
+    ///   - endDate: End date in YYYY-MM-DD format.
+    /// - Returns: Array of all daily readiness data for the range.
+    func fetchAllDailyReadiness(startDate: String, endDate: String) async throws -> [DailyReadiness] {
+        try await fetchAllPages { nextToken in
+            try await self.fetchDailyReadiness(
+                startDate: startDate,
+                endDate: endDate,
+                nextToken: nextToken
+            )
+        }
+    }
+
+    // MARK: - Sleep (Detailed) Endpoint
+
+    /// Fetches detailed sleep period data for a date range.
+    /// - Parameters:
+    ///   - startDate: Start date in YYYY-MM-DD format.
+    ///   - endDate: End date in YYYY-MM-DD format.
+    ///   - nextToken: Optional pagination token for fetching additional results.
+    /// - Returns: Paginated result containing detailed sleep period data.
+    func fetchSleep(
+        startDate: String,
+        endDate: String,
+        nextToken: String? = nil
+    ) async throws -> PaginatedResult<SleepPeriod> {
+        var queryItems = [
+            URLQueryItem(name: "start_date", value: startDate),
+            URLQueryItem(name: "end_date", value: endDate)
+        ]
+        if let nextToken {
+            queryItems.append(URLQueryItem(name: "next_token", value: nextToken))
+        }
+
+        let response: OuraAPIResponse<SleepPeriod> = try await fetchData(
+            endpoint: "sleep",
+            queryItems: queryItems
+        )
+        return PaginatedResult(items: response.data, nextToken: response.nextToken)
+    }
+
+    /// Fetches all detailed sleep periods for a date range, handling pagination automatically.
+    /// - Parameters:
+    ///   - startDate: Start date in YYYY-MM-DD format.
+    ///   - endDate: End date in YYYY-MM-DD format.
+    /// - Returns: Array of all sleep period data for the range.
+    func fetchAllSleep(startDate: String, endDate: String) async throws -> [SleepPeriod] {
+        try await fetchAllPages { nextToken in
+            try await self.fetchSleep(
+                startDate: startDate,
+                endDate: endDate,
+                nextToken: nextToken
+            )
+        }
+    }
+
+    // MARK: - Heart Rate Endpoint
+
+    /// Fetches heart rate data for a date range.
+    /// - Parameters:
+    ///   - startDate: Start date in YYYY-MM-DD format.
+    ///   - endDate: End date in YYYY-MM-DD format.
+    ///   - nextToken: Optional pagination token for fetching additional results.
+    /// - Returns: Paginated result containing heart rate data.
+    func fetchHeartRate(
+        startDate: String,
+        endDate: String,
+        nextToken: String? = nil
+    ) async throws -> PaginatedResult<HeartRate> {
+        var queryItems = [
+            URLQueryItem(name: "start_date", value: startDate),
+            URLQueryItem(name: "end_date", value: endDate)
+        ]
+        if let nextToken {
+            queryItems.append(URLQueryItem(name: "next_token", value: nextToken))
+        }
+
+        let response: OuraAPIResponse<HeartRate> = try await fetchData(
+            endpoint: "heartrate",
+            queryItems: queryItems
+        )
+        return PaginatedResult(items: response.data, nextToken: response.nextToken)
+    }
+
+    /// Fetches all heart rate data for a date range, handling pagination automatically.
+    /// - Parameters:
+    ///   - startDate: Start date in YYYY-MM-DD format.
+    ///   - endDate: End date in YYYY-MM-DD format.
+    /// - Returns: Array of all heart rate data for the range.
+    func fetchAllHeartRate(startDate: String, endDate: String) async throws -> [HeartRate] {
+        try await fetchAllPages { nextToken in
+            try await self.fetchHeartRate(
+                startDate: startDate,
+                endDate: endDate,
+                nextToken: nextToken
+            )
+        }
+    }
+
+    // MARK: - Private Helpers
+
+    /// Generic method to fetch data from any Oura API endpoint.
+    /// - Parameters:
+    ///   - endpoint: The API endpoint path (e.g., "daily_sleep").
+    ///   - queryItems: URL query parameters.
+    /// - Returns: Decoded response of the specified type.
+    private func fetchData<T: Decodable>(
+        endpoint: String,
+        queryItems: [URLQueryItem]
+    ) async throws -> T {
+        guard let token = accessToken, !token.isEmpty else {
+            throw OuraAPIError.missingAccessToken
+        }
+
+        guard var urlComponents = URLComponents(string: "\(baseURL)/\(endpoint)") else {
+            throw OuraAPIError.invalidURL
+        }
+        urlComponents.queryItems = queryItems
+
+        guard let url = urlComponents.url else {
+            throw OuraAPIError.invalidURL
+        }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await session.data(for: request)
+        } catch {
+            throw OuraAPIError.networkError(error.localizedDescription)
+        }
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw OuraAPIError.networkError("Invalid response type")
+        }
+
+        try validateHTTPResponse(httpResponse, data: data)
+
+        do {
+            return try decoder.decode(T.self, from: data)
+        } catch let decodingError as DecodingError {
+            throw OuraAPIError.decodingError(decodingError.localizedDescription)
+        } catch {
+            throw OuraAPIError.decodingError(error.localizedDescription)
+        }
+    }
+
+    /// Validates the HTTP response and throws appropriate errors for failure cases.
+    /// - Parameters:
+    ///   - response: The HTTP response to validate.
+    ///   - data: The response body data for error message extraction.
+    private func validateHTTPResponse(_ response: HTTPURLResponse, data: Data) throws {
+        switch response.statusCode {
+        case 200..<300:
+            return // Success
+        case 401:
+            throw OuraAPIError.unauthorized
+        case 404:
+            throw OuraAPIError.notFound
+        case 429:
+            throw OuraAPIError.rateLimitExceeded
+        case 500..<600:
+            throw OuraAPIError.serverError(statusCode: response.statusCode)
+        default:
+            let message = String(data: data, encoding: .utf8)
+            throw OuraAPIError.httpError(statusCode: response.statusCode, message: message)
+        }
+    }
+
+    /// Fetches all pages of data for a paginated endpoint.
+    /// - Parameter fetcher: A closure that fetches a single page of results.
+    /// - Returns: Combined array of all items from all pages.
+    private func fetchAllPages<T>(
+        fetcher: (String?) async throws -> PaginatedResult<T>
+    ) async throws -> [T] {
+        var allItems: [T] = []
+        var nextToken: String?
+
+        repeat {
+            let result = try await fetcher(nextToken)
+            allItems.append(contentsOf: result.items)
+            nextToken = result.nextToken
+        } while nextToken != nil
+
+        return allItems
+    }
+}
+
+// MARK: - Date Convenience Extensions
+
+extension OuraAPIService {
+    /// Fetches daily sleep summaries for a date range using Date objects.
+    /// - Parameters:
+    ///   - startDate: Start date.
+    ///   - endDate: End date.
+    /// - Returns: Paginated result containing daily sleep data.
+    func fetchDailySleep(
+        startDate: Date,
+        endDate: Date
+    ) async throws -> PaginatedResult<DailySleep> {
+        try await fetchDailySleep(
+            startDate: Self.formatDate(startDate),
+            endDate: Self.formatDate(endDate)
+        )
+    }
+
+    /// Fetches daily readiness scores for a date range using Date objects.
+    /// - Parameters:
+    ///   - startDate: Start date.
+    ///   - endDate: End date.
+    /// - Returns: Paginated result containing daily readiness data.
+    func fetchDailyReadiness(
+        startDate: Date,
+        endDate: Date
+    ) async throws -> PaginatedResult<DailyReadiness> {
+        try await fetchDailyReadiness(
+            startDate: Self.formatDate(startDate),
+            endDate: Self.formatDate(endDate)
+        )
+    }
+
+    /// Fetches detailed sleep period data for a date range using Date objects.
+    /// - Parameters:
+    ///   - startDate: Start date.
+    ///   - endDate: End date.
+    /// - Returns: Paginated result containing detailed sleep period data.
+    func fetchSleep(
+        startDate: Date,
+        endDate: Date
+    ) async throws -> PaginatedResult<SleepPeriod> {
+        try await fetchSleep(
+            startDate: Self.formatDate(startDate),
+            endDate: Self.formatDate(endDate)
+        )
+    }
+
+    /// Fetches heart rate data for a date range using Date objects.
+    /// - Parameters:
+    ///   - startDate: Start date.
+    ///   - endDate: End date.
+    /// - Returns: Paginated result containing heart rate data.
+    func fetchHeartRate(
+        startDate: Date,
+        endDate: Date
+    ) async throws -> PaginatedResult<HeartRate> {
+        try await fetchHeartRate(
+            startDate: Self.formatDate(startDate),
+            endDate: Self.formatDate(endDate)
+        )
+    }
+
+    /// Formats a Date as a YYYY-MM-DD string for the Oura API.
+    /// - Parameter date: The date to format.
+    /// - Returns: Formatted date string.
+    private static func formatDate(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone.current
+        return formatter.string(from: date)
+    }
+}
