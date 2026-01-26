@@ -1,6 +1,23 @@
 import Foundation
 import SwiftUI
 
+/// Represents the selectable historical data periods for trend graphs.
+enum HistoryPeriod: Int, CaseIterable, Identifiable {
+    case sevenDays = 7
+    case fourteenDays = 14
+    case thirtyDays = 30
+
+    var id: Int { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .sevenDays: return "7 Days"
+        case .fourteenDays: return "14 Days"
+        case .thirtyDays: return "30 Days"
+        }
+    }
+}
+
 /// Centralized application state that manages health data and coordinates data fetching.
 /// This observable object is shared across the app to ensure consistent state.
 @MainActor
@@ -11,17 +28,26 @@ final class AppState: ObservableObject {
     /// The most recent daily sleep data.
     @Published private(set) var currentSleep: DailySleep?
 
-    /// Historical readiness data for trends (last 7 days).
+    /// Historical readiness data for trends (configurable period).
     @Published private(set) var readinessHistory: [DailyReadiness] = []
 
-    /// Historical sleep data for trends (last 7 days).
+    /// Historical sleep data for trends (configurable period).
     @Published private(set) var sleepHistory: [DailySleep] = []
 
-    /// Historical sleep periods with HRV data for trends (last 7 days).
+    /// Historical sleep periods with HRV data for trends (configurable period).
     @Published private(set) var sleepPeriodHistory: [SleepPeriod] = []
 
-    /// Historical heart rate data for resting HR trends (last 7 days).
+    /// Historical heart rate data for resting HR trends (configurable period).
     @Published private(set) var heartRateHistory: [HeartRate] = []
+
+    /// The selected history period for trend graphs. Persisted to UserDefaults.
+    @AppStorage("historyPeriodDays") var historyPeriodDays: Int = HistoryPeriod.sevenDays.rawValue
+
+    /// The current history period as an enum value.
+    var historyPeriod: HistoryPeriod {
+        get { HistoryPeriod(rawValue: historyPeriodDays) ?? .sevenDays }
+        set { historyPeriodDays = newValue.rawValue }
+    }
 
     /// The most recent detailed sleep period data with stage durations.
     @Published private(set) var currentSleepPeriod: SleepPeriod?
@@ -85,8 +111,8 @@ final class AppState: ObservableObject {
     /// Performs the actual data fetch from the Oura API.
     private func performDataFetch() async throws {
         let today = Date()
-        let sevenDaysAgo = Calendar.current.date(byAdding: .day, value: -7, to: today) ?? today
-        let startDateStr = Self.formatDate(sevenDaysAgo)
+        let periodStart = Calendar.current.date(byAdding: .day, value: -historyPeriod.rawValue, to: today) ?? today
+        let startDateStr = Self.formatDate(periodStart)
         let endDateStr = Self.formatDate(today)
 
         // Fetch today's data and historical data concurrently
@@ -174,6 +200,14 @@ final class AppState: ObservableObject {
         }
     }
 
+    /// Called when the history period is changed in settings.
+    /// Triggers a data refresh to fetch the new range.
+    func onHistoryPeriodChanged() {
+        Task {
+            await fetchData()
+        }
+    }
+
     // MARK: - Computed Properties for UI
 
     /// The current readiness score, if available.
@@ -203,28 +237,28 @@ final class AppState: ObservableObject {
         return ScoreQuality(score: score)
     }
 
-    /// Average readiness score over the last 7 days.
+    /// Average readiness score over the selected history period.
     var averageReadinessScore: Int? {
         let scores = readinessHistory.compactMap { $0.score }
         guard !scores.isEmpty else { return nil }
         return scores.reduce(0, +) / scores.count
     }
 
-    /// Average sleep score over the last 7 days.
+    /// Average sleep score over the selected history period.
     var averageSleepScore: Int? {
         let scores = sleepHistory.compactMap { $0.score }
         guard !scores.isEmpty else { return nil }
         return scores.reduce(0, +) / scores.count
     }
 
-    /// Average HRV over the last 7 days (from sleep periods).
+    /// Average HRV over the selected history period (from sleep periods).
     var averageHRV: Int? {
         let hrvValues = sleepPeriodHistory.compactMap { $0.averageHrv }
         guard !hrvValues.isEmpty else { return nil }
         return hrvValues.reduce(0, +) / hrvValues.count
     }
 
-    /// Average resting heart rate over the last 7 days.
+    /// Average resting heart rate over the selected history period.
     var averageRestingHeartRate: Int? {
         let dailyResting = dailyRestingHeartRates
         guard !dailyResting.isEmpty else { return nil }

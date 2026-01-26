@@ -1,8 +1,9 @@
 import SwiftUI
 
-/// Settings view for configuring the Oura Personal Access Token.
+/// Settings view for configuring the Oura Personal Access Token and display preferences.
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var appState = AppState.shared
 
     @State private var token: String = ""
     @State private var isValidating = false
@@ -41,6 +42,29 @@ struct SettingsView: View {
             // Validation feedback
             if let result = validationResult {
                 validationFeedbackView(result)
+            }
+
+            Divider()
+
+            // History Period Setting
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Trend Graph Period")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
+                Picker("History Period", selection: $appState.historyPeriod) {
+                    ForEach(HistoryPeriod.allCases) { period in
+                        Text(period.displayName).tag(period)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: appState.historyPeriod) { _ in
+                    appState.onHistoryPeriodChanged()
+                }
+
+                Text("Choose how much historical data to display in trend graphs")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
             }
 
             Divider()
