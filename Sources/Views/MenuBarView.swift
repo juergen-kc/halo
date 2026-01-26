@@ -25,6 +25,10 @@ struct MenuBarView: View {
                         todaysScoresSection
                     }
 
+                    if let sleepPeriod = appState.currentSleepPeriod {
+                        SleepStagesView(sleepPeriod: sleepPeriod)
+                    }
+
                     if let sleep = appState.currentSleep {
                         SleepDetailsView(sleep: sleep)
                     }

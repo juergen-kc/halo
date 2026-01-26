@@ -17,6 +17,9 @@ final class AppState: ObservableObject {
     /// Historical sleep data for trends (last 7 days).
     @Published private(set) var sleepHistory: [DailySleep] = []
 
+    /// The most recent detailed sleep period data with stage durations.
+    @Published private(set) var currentSleepPeriod: SleepPeriod?
+
     /// Whether data is currently being fetched.
     @Published private(set) var isLoading = false
 
@@ -70,6 +73,7 @@ final class AppState: ObservableObject {
             // Fetch today's data and historical data concurrently
             async let todayReadiness = apiService.fetchDailyReadiness(startDate: today, endDate: today)
             async let todaySleep = apiService.fetchDailySleep(startDate: today, endDate: today)
+            async let todaySleepPeriods = apiService.fetchSleep(startDate: today, endDate: today)
             async let historyReadiness = apiService.fetchAllDailyReadiness(
                 startDate: Self.formatDate(sevenDaysAgo),
                 endDate: Self.formatDate(today)
@@ -79,12 +83,21 @@ final class AppState: ObservableObject {
                 endDate: Self.formatDate(today)
             )
 
-            let (readinessResult, sleepResult, readinessHistoryResult, sleepHistoryResult) = try await (
-                todayReadiness, todaySleep, historyReadiness, historySleep
+            let (
+                readinessResult,
+                sleepResult,
+                sleepPeriodsResult,
+                readinessHistoryResult,
+                sleepHistoryResult
+            ) = try await (
+                todayReadiness, todaySleep, todaySleepPeriods, historyReadiness, historySleep
             )
 
             self.currentReadiness = readinessResult.items.last
             self.currentSleep = sleepResult.items.last
+            // Use the primary (long_sleep) period, or fall back to the most recent
+            self.currentSleepPeriod = sleepPeriodsResult.items.first { $0.type == .longSleep }
+                ?? sleepPeriodsResult.items.last
             self.readinessHistory = readinessHistoryResult.sorted { $0.day < $1.day }
             self.sleepHistory = sleepHistoryResult.sorted { $0.day < $1.day }
             self.lastFetchTime = Date()
@@ -93,6 +106,7 @@ final class AppState: ObservableObject {
             self.lastError = nil
             self.currentReadiness = nil
             self.currentSleep = nil
+            self.currentSleepPeriod = nil
             self.readinessHistory = []
             self.sleepHistory = []
         } catch {
@@ -129,6 +143,7 @@ final class AppState: ObservableObject {
     func clearData() {
         currentReadiness = nil
         currentSleep = nil
+        currentSleepPeriod = nil
         readinessHistory = []
         sleepHistory = []
         lastError = nil
