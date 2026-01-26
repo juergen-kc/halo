@@ -106,8 +106,11 @@ final class AppState: ObservableObject {
     /// The minute component (0-59) for morning summary notification delivery. Persisted to UserDefaults.
     @AppStorage("morningSummaryMinute") var morningSummaryMinute: Int = 0
 
-    /// Whether the app should launch at login. Persisted to UserDefaults.
-    @AppStorage("launchAtLogin") var launchAtLogin: Bool = false
+    /// Whether the app should launch at login. Persisted to UserDefaults. Defaults to enabled.
+    @AppStorage("launchAtLogin") var launchAtLogin: Bool = true
+
+    /// Whether the user has been prompted for launch at login preference on first launch.
+    @AppStorage("hasPromptedForLaunchAtLogin") var hasPromptedForLaunchAtLogin: Bool = false
 
     /// Whether the system is currently in low power mode.
     @Published private(set) var isLowPowerMode = false

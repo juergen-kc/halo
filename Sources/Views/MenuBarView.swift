@@ -1,3 +1,4 @@
+import ServiceManagement
 import SwiftUI
 
 /// The mini dashboard popover displayed when the menu bar icon is clicked.
@@ -6,6 +7,9 @@ struct MenuBarView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.openURL) private var openURL
     @EnvironmentObject private var appState: AppState
+
+    /// Controls display of the first launch prompt sheet.
+    @State private var showLaunchAtLoginPrompt = false
 
     /// Oura web dashboard URL
     private let ouraDashboardURL = URL(string: "https://cloud.ouraring.com/")!
@@ -68,6 +72,16 @@ struct MenuBarView: View {
                 .padding(.vertical, 12)
         }
         .frame(width: 320, height: 400)
+        .onAppear {
+            // Show the launch at login prompt on first launch
+            if !appState.hasPromptedForLaunchAtLogin {
+                showLaunchAtLoginPrompt = true
+            }
+        }
+        .sheet(isPresented: $showLaunchAtLoginPrompt) {
+            LaunchAtLoginPromptView(isPresented: $showLaunchAtLoginPrompt)
+                .environmentObject(appState)
+        }
     }
 
     // MARK: - Header Section
@@ -236,7 +250,77 @@ struct MenuBarView: View {
     }
 }
 
+// MARK: - Launch at Login Prompt View
+
+/// First-launch prompt asking the user about launch at login preference.
+struct LaunchAtLoginPromptView: View {
+    @EnvironmentObject private var appState: AppState
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "power.circle.fill")
+                .font(.system(size: 48))
+                .foregroundColor(.accentColor)
+
+            Text("Launch at Login")
+                .font(.headline)
+
+            // swiftlint:disable:next line_length
+            Text("Commander can start automatically when you log in to your Mac so it's always available in your menu bar.")
+                .font(.subheadline)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+
+            HStack(spacing: 12) {
+                Button("Don't Enable") {
+                    setLaunchAtLogin(enabled: false)
+                    dismissPrompt()
+                }
+                .buttonStyle(.bordered)
+
+                Button("Enable") {
+                    setLaunchAtLogin(enabled: true)
+                    dismissPrompt()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            .padding(.top, 8)
+        }
+        .padding(24)
+        .frame(width: 300)
+    }
+
+    /// Sets the launch at login preference using SMAppService.
+    private func setLaunchAtLogin(enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+            appState.launchAtLogin = enabled
+        } catch {
+            // If registration fails, update state to reflect actual status
+            let currentStatus = SMAppService.mainApp.status
+            appState.launchAtLogin = (currentStatus == .enabled)
+        }
+    }
+
+    /// Marks the prompt as shown and dismisses it.
+    private func dismissPrompt() {
+        appState.hasPromptedForLaunchAtLogin = true
+        isPresented = false
+    }
+}
+
 #Preview {
     MenuBarView()
+        .environmentObject(AppState.shared)
+}
+
+#Preview("Launch at Login Prompt") {
+    LaunchAtLoginPromptView(isPresented: .constant(true))
         .environmentObject(AppState.shared)
 }
