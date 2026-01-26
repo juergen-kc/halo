@@ -105,21 +105,21 @@ struct MenuBarView: View {
                 .fontWeight(.semibold)
                 .foregroundColor(.secondary)
 
-            HStack(spacing: 12) {
-                ScoreCardView(
-                    title: "Readiness",
-                    score: appState.readinessScore,
-                    quality: appState.scoreQuality,
-                    icon: "bolt.fill"
-                )
-
-                ScoreCardView(
-                    title: "Sleep",
+            HStack(spacing: 24) {
+                CircularProgressView(
                     score: appState.sleepScore,
                     quality: appState.sleepQuality,
-                    icon: "moon.fill"
+                    label: "Sleep"
+                )
+
+                CircularProgressView(
+                    score: appState.readinessScore,
+                    quality: appState.scoreQuality,
+                    label: "Readiness"
                 )
             }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
         }
     }
 
