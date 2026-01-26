@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 import SwiftUI
 import UserNotifications
@@ -115,6 +116,18 @@ final class AppState: ObservableObject {
     /// Whether the system is currently in low power mode.
     @Published private(set) var isLowPowerMode = false
 
+    /// Whether the device has network connectivity.
+    @Published private(set) var isOnline: Bool = true
+
+    /// Whether the app is currently showing cached/stale data due to network issues.
+    @Published private(set) var isShowingCachedData: Bool = false
+
+    /// Network monitor for connectivity state.
+    private let networkMonitor: NetworkMonitor
+
+    /// Cancellables for Combine subscriptions.
+    private var cancellables = Set<AnyCancellable>()
+
     /// The most recent detailed sleep period data with stage durations.
     @Published private(set) var currentSleepPeriod: SleepPeriod?
 
@@ -156,7 +169,9 @@ final class AppState: ObservableObject {
         self.apiService = apiService
         self.keychainService = keychainService
         self.notificationService = notificationService
+        self.networkMonitor = NetworkMonitor.shared
         setupPowerStateObserver()
+        setupNetworkMonitoring()
         loadTokenAndFetchData()
     }
 
@@ -172,6 +187,19 @@ final class AppState: ObservableObject {
     func fetchData() async {
         guard !isLoading else { return }
 
+        // Check network connectivity first
+        if !isOnline {
+            // Mark as showing cached data if we have existing data
+            if hasAnyData {
+                isShowingCachedData = true
+                lastError = OuraAPIError.networkError("No internet connection")
+            } else {
+                let message = "No internet connection. Connect to the internet to load your data."
+                lastError = OuraAPIError.networkError(message)
+            }
+            return
+        }
+
         isLoading = true
         lastError = nil
 
@@ -179,14 +207,53 @@ final class AppState: ObservableObject {
             let token = try keychainService.retrieveToken()
             apiService.setAccessToken(token)
             try await performDataFetch()
+            // Successful fetch - no longer showing cached data
+            isShowingCachedData = false
         } catch let error as KeychainError where error == .itemNotFound {
             // No token configured - this is expected on first launch
             resetDataOnNoToken()
+        } catch let error as OuraAPIError {
+            handleAPIError(error)
         } catch {
+            // Preserve existing data and mark as cached on network failures
+            if hasAnyData {
+                isShowingCachedData = true
+            }
             self.lastError = error
         }
 
         isLoading = false
+    }
+
+    /// Handles API-specific errors with appropriate state updates.
+    private func handleAPIError(_ error: OuraAPIError) {
+        switch error {
+        case .networkError:
+            // On network errors, preserve existing data and mark as cached
+            if hasAnyData {
+                isShowingCachedData = true
+            }
+        case .rateLimitExceeded:
+            // Rate limit errors are transient - don't clear data
+            if hasAnyData {
+                isShowingCachedData = true
+            }
+        case .serverError:
+            // Server errors are transient - don't clear data
+            if hasAnyData {
+                isShowingCachedData = true
+            }
+        default:
+            // Other errors (unauthorized, etc.) - data may be invalid
+            break
+        }
+        self.lastError = error
+    }
+
+    /// Whether the app has any data loaded.
+    private var hasAnyData: Bool {
+        currentReadiness != nil || currentSleep != nil ||
+        !readinessHistory.isEmpty || !sleepHistory.isEmpty
     }
 
     /// Performs the actual data fetch from the Oura API.
@@ -420,6 +487,33 @@ final class AppState: ObservableObject {
     }
 
     // MARK: - Private Helpers
+
+    /// Sets up observation of network connectivity changes.
+    private func setupNetworkMonitoring() {
+        // Initial state
+        isOnline = networkMonitor.isConnected
+
+        // Subscribe to network changes
+        networkMonitor.$isConnected
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] isConnected in
+                self?.handleNetworkStateChange(isConnected: isConnected)
+            }
+            .store(in: &cancellables)
+    }
+
+    /// Handles network connectivity state changes.
+    private func handleNetworkStateChange(isConnected: Bool) {
+        let wasOnline = isOnline
+        isOnline = isConnected
+
+        if !wasOnline && isConnected {
+            // Network recovered - refresh data
+            Task {
+                await fetchData()
+            }
+        }
+    }
 
     /// Sets up observation of system power state changes.
     private func setupPowerStateObserver() {

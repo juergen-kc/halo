@@ -88,36 +88,77 @@ struct MenuBarView: View {
 
     @ViewBuilder
     private var headerSection: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Commander")
-                    .font(.headline)
-                if let lastFetch = appState.lastFetchTime {
-                    Text("Updated \(lastFetch.formatted(.relative(presentation: .named)))")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Commander")
+                        .font(.headline)
+                    if let lastFetch = appState.lastFetchTime {
+                        Text("Updated \(lastFetch.formatted(.relative(presentation: .named)))")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                }
+
+                Spacer()
+
+                if appState.isLoading {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                } else {
+                    Button {
+                        Task {
+                            await appState.fetchData()
+                        }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundColor(.secondary)
+                    .help("Refresh data")
                 }
             }
 
-            Spacer()
-
-            if appState.isLoading {
-                ProgressView()
-                    .scaleEffect(0.7)
-            } else {
-                Button {
-                    Task {
-                        await appState.fetchData()
-                    }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 12))
-                }
-                .buttonStyle(.plain)
-                .foregroundColor(.secondary)
-                .help("Refresh data")
+            // Offline indicator
+            if !appState.isOnline {
+                offlineIndicator
+            } else if appState.isShowingCachedData {
+                cachedDataIndicator
             }
         }
+    }
+
+    // MARK: - Status Indicators
+
+    @ViewBuilder
+    private var offlineIndicator: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "wifi.slash")
+                .font(.caption2)
+            Text("No internet connection")
+                .font(.caption2)
+        }
+        .foregroundColor(.orange)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.orange.opacity(0.15))
+        .cornerRadius(4)
+    }
+
+    @ViewBuilder
+    private var cachedDataIndicator: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "clock.arrow.circlepath")
+                .font(.caption2)
+            Text("Showing cached data")
+                .font(.caption2)
+        }
+        .foregroundColor(.secondary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Color.secondary.opacity(0.1))
+        .cornerRadius(4)
     }
 
     // MARK: - Today's Scores Section
@@ -153,21 +194,17 @@ struct MenuBarView: View {
     @ViewBuilder
     private var noDataSection: some View {
         VStack(spacing: 8) {
-            Image(systemName: "moon.zzz")
-                .font(.system(size: 32))
-                .foregroundColor(.secondary)
-
-            Text("No data available")
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-
             if let error = appState.lastError {
-                Text(error.localizedDescription)
-                    .font(.caption)
-                    .foregroundColor(.red)
-                    .multilineTextAlignment(.center)
-                    .lineLimit(3)
+                errorView(for: error)
             } else {
+                Image(systemName: "moon.zzz")
+                    .font(.system(size: 32))
+                    .foregroundColor(.secondary)
+
+                Text("No data available")
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
                 Text("Tap refresh to load your health data")
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -175,6 +212,131 @@ struct MenuBarView: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 20)
+    }
+
+    // MARK: - Error Views
+
+    @ViewBuilder
+    private func errorView(for error: Error) -> some View {
+        if let apiError = error as? OuraAPIError {
+            apiErrorView(for: apiError)
+        } else {
+            genericErrorView(message: error.localizedDescription)
+        }
+    }
+
+    @ViewBuilder
+    private func apiErrorView(for error: OuraAPIError) -> some View {
+        switch error {
+        case .unauthorized:
+            unauthorizedErrorView
+        case .networkError:
+            networkErrorView(message: error.localizedDescription)
+        case .rateLimitExceeded:
+            rateLimitErrorView
+        case .serverError:
+            serverErrorView
+        default:
+            genericErrorView(message: error.localizedDescription)
+        }
+    }
+
+    @ViewBuilder
+    private var unauthorizedErrorView: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "key.slash")
+                .font(.system(size: 32))
+                .foregroundColor(.orange)
+
+            Text("Token Invalid or Expired")
+                .font(.subheadline)
+                .fontWeight(.medium)
+
+            Text("Your Oura access token is no longer valid. Please update it in Settings.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+
+            Button("Open Settings") {
+                openWindow(id: "settings")
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+    }
+
+    @ViewBuilder
+    private func networkErrorView(message: String) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: "wifi.exclamationmark")
+                .font(.system(size: 32))
+                .foregroundColor(.orange)
+
+            Text("Connection Issue")
+                .font(.subheadline)
+                .fontWeight(.medium)
+
+            Text(message)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+        }
+    }
+
+    @ViewBuilder
+    private var rateLimitErrorView: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "hourglass")
+                .font(.system(size: 32))
+                .foregroundColor(.orange)
+
+            Text("Rate Limit Reached")
+                .font(.subheadline)
+                .fontWeight(.medium)
+
+            Text("Too many requests. Please wait a moment and try again.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+    }
+
+    @ViewBuilder
+    private var serverErrorView: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "exclamationmark.icloud")
+                .font(.system(size: 32))
+                .foregroundColor(.orange)
+
+            Text("Server Issue")
+                .font(.subheadline)
+                .fontWeight(.medium)
+
+            Text("The Oura service is temporarily unavailable. Please try again later.")
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+    }
+
+    @ViewBuilder
+    private func genericErrorView(message: String) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 32))
+                .foregroundColor(.red)
+
+            Text("Error")
+                .font(.subheadline)
+                .fontWeight(.medium)
+
+            Text(message)
+                .font(.caption)
+                .foregroundColor(.red)
+                .multilineTextAlignment(.center)
+                .lineLimit(3)
+        }
     }
 
     // MARK: - Setup Prompt Section

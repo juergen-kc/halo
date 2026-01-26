@@ -77,6 +77,27 @@ struct PaginatedResult<T> {
     }
 }
 
+// MARK: - Retry Configuration
+
+/// Configuration for retry behavior on transient failures.
+struct RetryConfiguration {
+    /// Maximum number of retry attempts.
+    let maxRetries: Int
+
+    /// Base delay between retries in seconds.
+    let baseDelay: TimeInterval
+
+    /// Maximum delay between retries in seconds.
+    let maxDelay: TimeInterval
+
+    /// Default configuration with exponential backoff.
+    static let `default` = RetryConfiguration(
+        maxRetries: 3,
+        baseDelay: 1.0,
+        maxDelay: 30.0
+    )
+}
+
 // MARK: - Oura API Service
 
 /// Service for fetching health data from the Oura API.
@@ -94,14 +115,23 @@ final class OuraAPIService {
     /// JSON decoder configured for Oura API responses.
     private let decoder: JSONDecoder
 
+    /// Retry configuration for handling transient failures.
+    private let retryConfig: RetryConfiguration
+
     /// Creates a new OuraAPIService instance.
     /// - Parameters:
     ///   - accessToken: Optional personal access token. Can be set later via `setAccessToken(_:)`.
     ///   - session: URLSession to use for requests. Defaults to `.shared`.
-    init(accessToken: String? = nil, session: URLSession = .shared) {
+    ///   - retryConfig: Configuration for retry behavior. Defaults to standard configuration.
+    init(
+        accessToken: String? = nil,
+        session: URLSession = .shared,
+        retryConfig: RetryConfiguration = .default
+    ) {
         self.accessToken = accessToken
         self.session = session
         self.decoder = JSONDecoder()
+        self.retryConfig = retryConfig
     }
 
     /// Sets the access token for API authentication.
@@ -321,27 +351,105 @@ final class OuraAPIService {
         request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
 
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(for: request)
-        } catch {
-            throw OuraAPIError.networkError(error.localizedDescription)
+        // Execute request with retry logic for transient failures
+        return try await executeWithRetry(request: request)
+    }
+
+    /// Executes an HTTP request with automatic retry for transient failures.
+    /// Uses exponential backoff for rate limiting and server errors.
+    /// - Parameter request: The URLRequest to execute.
+    /// - Returns: Decoded response of the specified type.
+    private func executeWithRetry<T: Decodable>(request: URLRequest) async throws -> T {
+        var lastError: Error?
+        var attempt = 0
+
+        while attempt <= retryConfig.maxRetries {
+            do {
+                let (data, response) = try await session.data(for: request)
+
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    throw OuraAPIError.networkError("Invalid response type")
+                }
+
+                // Check if we should retry based on status code
+                if shouldRetry(statusCode: httpResponse.statusCode), attempt < retryConfig.maxRetries {
+                    let delay = calculateBackoffDelay(
+                        attempt: attempt,
+                        response: httpResponse
+                    )
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    attempt += 1
+                    continue
+                }
+
+                try validateHTTPResponse(httpResponse, data: data)
+
+                return try decoder.decode(T.self, from: data)
+            } catch let error as OuraAPIError where isRetryableError(error) {
+                lastError = error
+                if attempt < retryConfig.maxRetries {
+                    let delay = calculateBackoffDelay(attempt: attempt, response: nil)
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    attempt += 1
+                    continue
+                }
+            } catch let error as DecodingError {
+                throw OuraAPIError.decodingError(error.localizedDescription)
+            } catch is CancellationError {
+                throw CancellationError()
+            } catch {
+                // Network errors are retryable
+                lastError = OuraAPIError.networkError(error.localizedDescription)
+                if attempt < retryConfig.maxRetries {
+                    let delay = calculateBackoffDelay(attempt: attempt, response: nil)
+                    try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000))
+                    attempt += 1
+                    continue
+                }
+            }
+
+            attempt += 1
         }
 
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw OuraAPIError.networkError("Invalid response type")
+        throw lastError ?? OuraAPIError.networkError("Request failed after retries")
+    }
+
+    /// Determines if a status code should trigger a retry.
+    private func shouldRetry(statusCode: Int) -> Bool {
+        switch statusCode {
+        case 429: // Rate limit
+            return true
+        case 500..<600: // Server errors
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Determines if an error type is retryable.
+    private func isRetryableError(_ error: OuraAPIError) -> Bool {
+        switch error {
+        case .rateLimitExceeded, .serverError, .networkError:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Calculates the backoff delay for a retry attempt.
+    /// Uses exponential backoff with optional Retry-After header support.
+    private func calculateBackoffDelay(attempt: Int, response: HTTPURLResponse?) -> TimeInterval {
+        // Check for Retry-After header (common for rate limiting)
+        if let response,
+           let retryAfter = response.value(forHTTPHeaderField: "Retry-After"),
+           let seconds = Double(retryAfter) {
+            return min(seconds, retryConfig.maxDelay)
         }
 
-        try validateHTTPResponse(httpResponse, data: data)
-
-        do {
-            return try decoder.decode(T.self, from: data)
-        } catch let decodingError as DecodingError {
-            throw OuraAPIError.decodingError(decodingError.localizedDescription)
-        } catch {
-            throw OuraAPIError.decodingError(error.localizedDescription)
-        }
+        // Exponential backoff: baseDelay * 2^attempt with jitter
+        let exponentialDelay = retryConfig.baseDelay * pow(2.0, Double(attempt))
+        let jitter = Double.random(in: 0...0.5) * exponentialDelay
+        return min(exponentialDelay + jitter, retryConfig.maxDelay)
     }
 
     /// Validates the HTTP response and throws appropriate errors for failure cases.
