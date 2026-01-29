@@ -33,9 +33,9 @@ RESOURCES="$CONTENTS/Resources"
 mkdir -p "$MACOS"
 mkdir -p "$RESOURCES"
 
-# Copy executable (named Commander from Package.swift)
+# Copy executable
 echo "Copying executable..."
-cp "$PROJECT_DIR/.build/release/Commander" "$MACOS/Commander"
+cp "$PROJECT_DIR/.build/release/Halo" "$MACOS/Halo"
 
 # Copy Info.plist
 echo "Copying Info.plist..."
@@ -50,7 +50,7 @@ else
 fi
 
 # Set executable permissions
-chmod +x "$MACOS/Commander"
+chmod +x "$MACOS/Halo"
 
 echo ""
 echo "Build complete: $APP_BUNDLE"
