@@ -4,19 +4,19 @@
 import PackageDescription
 
 let package = Package(
-    name: "Commander",
+    name: "Halo",
     platforms: [
         .macOS(.v13)
     ],
     products: [
         .executable(
-            name: "Commander",
-            targets: ["Commander"]
+            name: "Halo",
+            targets: ["Halo"]
         )
     ],
     targets: [
         .executableTarget(
-            name: "Commander",
+            name: "Halo",
             dependencies: [],
             path: "Sources"
         )
