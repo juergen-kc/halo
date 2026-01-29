@@ -2,6 +2,8 @@
 .build/
 Build/
 DerivedData/
+*.app/
+*.dmg
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
 
@@ -21,3 +23,13 @@ Package.resolved
 # Temporary files
 *.swp
 *~
+
+# Code signing
+*.entitlements
+
+# Generated assets
+AppIcon.icns
+
+# Tool-specific
+.ralph-tui/
+tasks/
